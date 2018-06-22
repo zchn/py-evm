@@ -2,6 +2,7 @@ import asyncio
 from asyncio.base_events import Server
 from typing import (
     Dict,
+    Iterable,
     NamedTuple,
     Set,
     Tuple,
@@ -33,26 +34,57 @@ class MockServer(Server):
         return
 
 
-class MockStreamWriter:
-    def __init__(self, write_target):
-        self._target = write_target
+class _MemoryTransport(asyncio.Transport):
+    """Direct connection between a StreamWriter and StreamReader."""
 
-    def write(self, *args, **kwargs):
-        self._target(*args, **kwargs)
+    def __init__(self, reader: asyncio.StreamReader) -> None:
+        super().__init__()
+        self._reader = reader
 
-    async def drain(self):
-        pass
+    def write(self, data: bytes) -> None:
+        self._reader.feed_data(data)
 
-    def close(self):
-        pass
+    def writelines(self, data: Iterable[bytes]) -> None:
+        for line in data:
+            self._reader.feed_data(line)
+            self._reader.feed_data(b'\n')
+
+    def write_eof(self) -> None:
+        self._reader.feed_eof()
+
+    def can_write_eof(self) -> bool:
+        return True
+
+    def is_closing(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        self.write_eof()
+
+
+def mempipe(loop: asyncio.AbstractEventLoop=None,
+            limit: int=2**16) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """In-memory pipe, returns a ``(reader, writer)`` pair.
+
+    .. versionadded:: 0.1
+
+    """
+
+    loop = loop or asyncio.get_event_loop()
+
+    reader = asyncio.StreamReader(loop=loop, limit=limit)
+    writer = asyncio.StreamWriter(
+        transport=_MemoryTransport(reader),
+        protocol=asyncio.StreamReaderProtocol(reader, loop=loop),
+        reader=reader,
+        loop=loop,
+    )
+    return reader, writer
 
 
 def get_connected_readers():
-    left_reader = asyncio.StreamReader()
-    right_reader = asyncio.StreamReader()
-    # Link the readers to mock writers.
-    left_writer = MockStreamWriter(right_reader.feed_data)
-    right_writer = MockStreamWriter(left_reader.feed_data)
+    left_reader, right_writer = mempipe()
+    right_reader, left_writer = mempipe()
 
     return (
         left_reader, left_writer,
