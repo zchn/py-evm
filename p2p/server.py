@@ -111,11 +111,15 @@ class Server(BaseService):
         if not bootstrap_nodes:
             self.logger.warn("Running with no bootstrap nodes")
 
+    @property
+    def network(self):
+        from p2p.tools import network
+        return network.mock_network
+
     async def _start_tcp_listener(self) -> None:
         # TODO: Support IPv6 addresses as well.
-        from p2p.tools.network import mock_network
         #self._tcp_listener = await asyncio.start_server(
-        self._tcp_listener = await mock_network.start_server(
+        self._tcp_listener = await self.network.start_server(
             self.receive_handshake,
             host=self.host,
             port=self.port,
@@ -199,6 +203,7 @@ class Server(BaseService):
             HandshakeFailure,
             asyncio.IncompleteReadError,
         )
+        self.logger.info('GOT HANDSHAKE')
         try:
             await self._receive_handshake(reader, writer)
         except expected_exceptions as e:
@@ -206,15 +211,18 @@ class Server(BaseService):
         except OperationCancelled:
             pass
         except Exception as e:
-            self.logger.exception("Unexpected error handling handshake")
+            self.logger.exception("Unexpected error handling handshake: %r", e)
 
     async def _receive_handshake(
             self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self.logger.info('READING AUTH MSG')
         msg = await self.wait(
             reader.read(ENCRYPTED_AUTH_MSG_LEN),
             timeout=REPLY_TIMEOUT)
 
+        self.logger.info('BEFORE_EXTRA_INFO')
         ip, socket, *_ = writer.get_extra_info("peername")
+        self.logger.info('AFTER_EXTRA_INFO')
         remote_address = Address(ip, socket)
         self.logger.debug("Receiving handshake from %s", remote_address)
         got_eip8 = False

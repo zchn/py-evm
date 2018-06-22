@@ -43,6 +43,9 @@ from .constants import (
 )
 
 
+logger = logging.getLogger('p2p.testing')
+
+
 async def handshake(
         remote: kademlia.Node,
         privkey: datatypes.PrivateKey,
@@ -74,6 +77,7 @@ async def _handshake(initiator: 'HandshakeInitiator', reader: asyncio.StreamRead
     auth_init = initiator.encrypt_auth_message(auth_msg)
     writer.write(auth_init)
 
+    logger.info('reader: %s writer: %s', reader.__id, writer.__id)
     auth_ack = await wait_with_token(
         reader.read(ENCRYPTED_AUTH_ACK_LEN),
         token=token,
@@ -118,10 +122,10 @@ class HandshakeBase:
         return self.privkey.public_key
 
     async def connect(self) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        from p2p.tools.network import mock_network
+        from p2p.tools import network
         return await wait_with_token(
             #asyncio.open_connection(host=self.remote.address.ip, port=self.remote.address.tcp_port),
-            mock_network.open_connection(host=self.remote.address.ip, port=self.remote.address.tcp_port),
+            network.mock_network.open_connection(host=self.remote.address.ip, port=self.remote.address.tcp_port),
             token=self.cancel_token,
             timeout=REPLY_TIMEOUT)
 

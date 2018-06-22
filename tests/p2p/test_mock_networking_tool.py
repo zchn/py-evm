@@ -17,7 +17,6 @@ from p2p.kademlia import (
     Address,
 )
 from p2p.server import Server
-from p2p.tools.network import mock_network
 
 from auth_constants import eip8_values
 from dumb_peer import DumbPeer
@@ -66,8 +65,15 @@ def get_server(privkey, address, peer_class):
     return server
 
 
+@pytest.fixture(autouse=True)
+def network():
+    from p2p.tools import network
+    network.mock_network = network.MockNetwork()
+    return network.mock_network
+
+
 @pytest.fixture
-async def server():
+async def server(network):
     server = get_server(RECEIVER_PRIVKEY, SERVER_ADDRESS, ETHPeer)
     await asyncio.wait_for(server._start_tcp_listener(), timeout=1)
     yield server
@@ -76,7 +82,7 @@ async def server():
 
 
 @pytest.fixture
-async def receiver_server_with_dumb_peer():
+async def receiver_server_with_dumb_peer(network):
     server = get_server(RECEIVER_PRIVKEY, SERVER_ADDRESS, DumbPeer)
     await asyncio.wait_for(server._start_tcp_listener(), timeout=1)
     yield server
@@ -85,7 +91,7 @@ async def receiver_server_with_dumb_peer():
 
 
 @pytest.mark.asyncio
-async def test_server_authenticates_incoming_connections(monkeypatch, server, event_loop):
+async def test_server_authenticates_incoming_connections(monkeypatch, server, event_loop, network):
     connected_peer = None
 
     async def mock_do_handshake(peer):
@@ -100,7 +106,7 @@ async def test_server_authenticates_incoming_connections(monkeypatch, server, ev
 
     # Send auth init message to the server.
     reader, writer = await asyncio.wait_for(
-        mock_network.open_connection(SERVER_ADDRESS.ip, SERVER_ADDRESS.tcp_port),
+        network.open_connection(SERVER_ADDRESS.ip, SERVER_ADDRESS.tcp_port),
         timeout=1)
     writer.write(eip8_values['auth_init_ciphertext'])
     await asyncio.wait_for(writer.drain(), timeout=1)
@@ -117,7 +123,7 @@ async def test_server_authenticates_incoming_connections(monkeypatch, server, ev
 
 
 @pytest.mark.asyncio
-async def test_peer_pool_connect(monkeypatch, event_loop, receiver_server_with_dumb_peer):
+async def test_peer_pool_connect(monkeypatch, event_loop, receiver_server_with_dumb_peer, network):
     started_peers = []
 
     def mock_start_peer(peer):

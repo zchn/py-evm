@@ -22,14 +22,14 @@ from evm.vm.forks.spurious_dragon import SpuriousDragonVM
 
 @pytest.fixture(autouse=True, scope="session")
 def vm_logger():
-    logger = logging.getLogger('evm')
+    logger = logging.getLogger('p2p')
 
     handler = logging.StreamHandler(sys.stdout)
 
     # level = TRACE_LEVEL_NUM
-    # level = logging.DEBUG
+    level = logging.DEBUG
     # level = logging.INFO
-    level = logging.ERROR
+    # level = logging.ERROR
 
     logger.setLevel(level)
     handler.setLevel(level)
