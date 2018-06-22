@@ -118,8 +118,10 @@ class HandshakeBase:
         return self.privkey.public_key
 
     async def connect(self) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        from p2p.tools.network import mock_network
         return await wait_with_token(
-            asyncio.open_connection(host=self.remote.address.ip, port=self.remote.address.tcp_port),
+            #asyncio.open_connection(host=self.remote.address.ip, port=self.remote.address.tcp_port),
+            mock_network.open_connection(host=self.remote.address.ip, port=self.remote.address.tcp_port),
             token=self.cancel_token,
             timeout=REPLY_TIMEOUT)
 

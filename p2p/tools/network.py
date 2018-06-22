@@ -2,13 +2,13 @@ import asyncio
 from asyncio.base_events import Server
 from typing import (
     Dict,
-    Namedtuple,
+    NamedTuple,
     Set,
     Tuple,
 )
 
 
-class Address(Namedtuple):
+class Address(NamedTuple):
     transport: str
     ip: str
     port: int
@@ -40,6 +40,9 @@ class MockStreamWriter:
     def write(self, *args, **kwargs):
         self._target(*args, **kwargs)
 
+    async def drain(self):
+        pass
+
     def close(self):
         pass
 
@@ -52,8 +55,8 @@ def get_connected_readers():
     right_writer = MockStreamWriter(left_reader.feed_data)
 
     return (
-        (left_reader, left_writer),
-        (right_reader, right_writer),
+        left_reader, left_writer,
+        right_reader, right_writer,
     )
 
 
@@ -63,10 +66,11 @@ class MockNetwork:
 
     def __init__(self):
         self.servers = {}
-        self.connections = {}
+        self.connections = set()
 
     async def start_server(self, client_connected_cb, host=None, port=None, *, loop=None, limit=None, **kwds) -> Server:
         address = Address('tcp', host, port)
+        assert host != '0.0.0.0'
         server = MockServer(client_connected_cb, address, self)
         self.servers[address] = server
         return server

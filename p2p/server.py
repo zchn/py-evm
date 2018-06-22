@@ -88,6 +88,7 @@ class Server(BaseService):
                  bootstrap_nodes: Tuple[Node, ...] = None,
                  preferred_nodes: Sequence[Node] = None,
                  token: CancelToken = None,
+                 host: str = '0.0.0.0',
                  ) -> None:
         super().__init__(token)
         self.headerdb = headerdb
@@ -95,6 +96,7 @@ class Server(BaseService):
         self.chain = chain
         self.base_db = base_db
         self.privkey = privkey
+        self.host = host
         self.port = port
         self.network_id = network_id
         self.peer_class = peer_class
@@ -111,9 +113,11 @@ class Server(BaseService):
 
     async def _start_tcp_listener(self) -> None:
         # TODO: Support IPv6 addresses as well.
-        self._tcp_listener = await asyncio.start_server(
+        from p2p.tools.network import mock_network
+        #self._tcp_listener = await asyncio.start_server(
+        self._tcp_listener = await mock_network.start_server(
             self.receive_handshake,
-            host='0.0.0.0',
+            host=self.host,
             port=self.port,
         )
 
