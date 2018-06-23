@@ -102,35 +102,29 @@ class Network:
     servers: Dict[Address, Server] = None
     connections: Set[Address] = None
 
-    def __init__(self, host, router):
+    def __init__(self, host):
         self.host
         self.servers = {}
         self.connections = set()
 
-    def get_server(self, address):
+    def get_server(self, port):
         try:
-            return self.servers[address]
+            return self.servers[port]
         except KeyError:
-            raise Exception("No server running at {0}".format(address)
+            raise Exception("No server running at {0}".format(address))
 
-    async def start_server(self, client_connected_cb, host=None, port=None, *, loop=None, limit=None, **kwds) -> Server:
-        address = Address('tcp', host, port)
-        assert host != '0.0.0.0'
-        server = MockServer(client_connected_cb, address, self)
+    async def start_server(self, client_connected_cb, port) -> Server:
+        address = Address('tcp', self.host, port)
+        server = Server(client_connected_cb, address, self)
         self.servers[address] = server
         return server
 
-    async def open_connection(self, port=None, *, loop=None, limit=None, **kwds) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    async def open_connection(self, host, port) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         to_address = Address('tcp', host, port)
 
-        if to_address not in self.servers:
-            raise Exception('no server listening')
-
-        server = self.servers[to_address]
-        from_address = server.address
-
-        if (to_address, from_address) in self.connections:
+        if to_address in self.connections:
             raise Exception('already connected')
+
 
         self.connections.add(to_address)
 
@@ -139,9 +133,8 @@ class Network:
             to_address=to_address,
         )
 
-        logger.info('IN OPEN_CONNECTION')
+        server = self.get_server(to_address)
         asyncio.ensure_future(server.client_connected_cb(server_reader, server_writer))
-        logger.info('RETURNING OPEN_CONNECTION')
         return client_reader, client_writer
 
 
@@ -150,7 +143,7 @@ class Router:
 
     def create_network(self, host):
         if host in self.networks:
-            raise Exception("network already exists")``
+            raise Exception("network already exists")
         network = Network(host, self)
         self.networks[host] = network
         return network
@@ -161,9 +154,5 @@ class Router:
         except KeyError:
             raise Exception("unknown network")
 
-    async def open_connection(self, host=None, port=None, *, loop=None, limit=None, **kwds) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        network = self.get_network(host)
-        return network.open_connection(port)
 
-
-mock_network = MockNetwork()
+router = Router()
