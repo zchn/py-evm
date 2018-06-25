@@ -22,7 +22,9 @@ class Address(NamedTuple):
 
 
 class MemoryTransport(asyncio.Transport):
-    """Direct connection between a StreamWriter and StreamReader."""
+    """
+    Direct connection between a StreamWriter and StreamReader.
+    """
 
     def __init__(self, address: Address, reader: asyncio.StreamReader) -> None:
         super().__init__()
@@ -64,11 +66,20 @@ def mempipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     """
 
     reader = asyncio.StreamReader()
+
+    # TODO: Calls to `writer.drain` will block until the corresponding data has
+    # actually been read by the reader.  This is not how things actually behave
+    # in a real networked environment as the call to `writer.drain` will return
+    # once the data has been sent over the protocol, so...
+
+    # Preliminary investigation suggests that this must be done in the
+    # `Protocol` class
     transport = MemoryTransport(address, reader)
+    protocol = asyncio.StreamReaderProtocol(reader)
 
     writer = asyncio.StreamWriter(
         transport=transport,
-        protocol=asyncio.StreamReaderProtocol(reader),
+        protocol=protocol,
         reader=reader,
         loop=asyncio.get_event_loop(),
     )
@@ -105,9 +116,6 @@ class Server:
 
     async def wait_closed(self):
         return
-
-
-# TODO: Need a `Router` and a `Network`.  Network is aware of IP address and Router
 
 
 class Network:
