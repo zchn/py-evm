@@ -111,10 +111,14 @@ class Server(BaseService):
         if not bootstrap_nodes:
             self.logger.warn("Running with no bootstrap nodes")
 
+    _network = None
+
     @property
     def network(self):
-        from p2p.tools import network
-        return network.mock_network
+        if self._network is None:
+            from p2p.tools import network
+            self._network = network.router.get_network(self.host)
+        return self._network
 
     async def _start_tcp_listener(self) -> None:
         # TODO: Support IPv6 addresses as well.
@@ -253,6 +257,7 @@ class Server(BaseService):
 
         # Use the `writer` to send the reply to the remote
         writer.write(auth_ack_ciphertext)
+        self.logger.info('HERER!!!!!')
         await self.wait(writer.drain())
 
         # Call `HandshakeResponder.derive_shared_secrets()` and use return values to create `Peer`

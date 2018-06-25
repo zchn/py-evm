@@ -1,5 +1,6 @@
 import asyncio
 import pytest
+import logging
 
 from eth_keys import keys
 
@@ -20,6 +21,7 @@ from p2p.server import Server
 
 from auth_constants import eip8_values
 from dumb_peer import DumbPeer
+logger = logging.getLogger('p2p.testing.network')
 
 
 NETWORK_ID = 99
@@ -66,14 +68,14 @@ def get_server(privkey, address, peer_class):
 
 
 @pytest.fixture(autouse=True)
-def network():
+def router():
     from p2p.tools import network
-    network.mock_network = network.MockNetwork()
-    return network.mock_network
+    network.router = network.Router()
+    return network.router
 
 
 @pytest.fixture
-async def server(network):
+async def server(router):
     server = get_server(RECEIVER_PRIVKEY, SERVER_ADDRESS, ETHPeer)
     await asyncio.wait_for(server._start_tcp_listener(), timeout=1)
     yield server
@@ -82,7 +84,7 @@ async def server(network):
 
 
 @pytest.fixture
-async def receiver_server_with_dumb_peer(network):
+async def receiver_server_with_dumb_peer(router):
     server = get_server(RECEIVER_PRIVKEY, SERVER_ADDRESS, DumbPeer)
     await asyncio.wait_for(server._start_tcp_listener(), timeout=1)
     yield server
@@ -91,18 +93,22 @@ async def receiver_server_with_dumb_peer(network):
 
 
 @pytest.mark.asyncio
-async def test_server_authenticates_incoming_connections(monkeypatch, server, event_loop, network):
+async def test_server_authenticates_incoming_connections(monkeypatch, server, event_loop, router):
     connected_peer = None
 
     async def mock_do_handshake(peer):
+        logger.info('HERE!!!!: %s', peer)
         nonlocal connected_peer
         connected_peer = peer
+        logger.info('HERE!!!!: %s', connected_peer)
 
     # Only test the authentication in this test.
     monkeypatch.setattr(server, 'do_handshake', mock_do_handshake)
     # We need this to ensure the server can check if the peer pool is full for
     # incoming connections.
     monkeypatch.setattr(server, 'peer_pool', MockPeerPool())
+
+    network = router.get_network('127.0.0.1')
 
     # Send auth init message to the server.
     reader, writer = await asyncio.wait_for(
@@ -116,14 +122,27 @@ async def test_server_authenticates_incoming_connections(monkeypatch, server, ev
         reader.read(len(eip8_values['auth_ack_ciphertext'])),
         timeout=1)
 
+    try:
+        # We have to read through the rest of the reader to cause the
+        # corresponding call to `writer.drain` on the server side to proceed to
+        # the next step of the handshake.
+        await asyncio.wait_for(
+            reader.read(),
+            timeout=0.01,
+        )
+    except asyncio.TimeoutError:
+        pass
+
     # The sole connected node is our initiator.
+    logger.info('PRE_ASSERT')
     assert connected_peer is not None
+    logger.info('POST_ASSERT')
     assert isinstance(connected_peer, ETHPeer)
     assert connected_peer.privkey == RECEIVER_PRIVKEY
 
 
 @pytest.mark.asyncio
-async def test_peer_pool_connect(monkeypatch, event_loop, receiver_server_with_dumb_peer, network):
+async def test_peer_pool_connect(monkeypatch, event_loop, receiver_server_with_dumb_peer, router):
     started_peers = []
 
     def mock_start_peer(peer):
