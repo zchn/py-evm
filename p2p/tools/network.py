@@ -21,7 +21,7 @@ class Address(NamedTuple):
         return '%s:%s:%s' % (self.transport, self.host, self.port)
 
 
-class MemoryTransport(asyncio.Transport):
+class DirectLinkTransport(asyncio.Transport):
     """
     Direct connection between a StreamWriter and StreamReader.
     """
@@ -58,13 +58,45 @@ class MemoryTransport(asyncio.Transport):
         self.write_eof()
 
 
-def mempipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """In-memory pipe, returns a ``(reader, writer)`` pair.
-
-    .. versionadded:: 0.1
-
+class NetworkSimulatorTransport(asyncio.Transport):
+    """
+    Direct connection between a StreamWriter and StreamReader.
     """
 
+    def __init__(self, reader: asyncio.StreamReader) -> None:
+        super().__init__()
+        self._queue = asyncio.Queue
+        self._reader = reader
+
+    def write(self, data: bytes) -> None:
+        self._queue.put_nowait(len(data))
+        self._reader.feed_data(data)
+
+    def writelines(self, data: Iterable[bytes]) -> None:
+        for line in data:
+            self._reader.feed_data(line)
+            self._reader.feed_data(b'\n')
+            self._queue.put_nowait(len(data) + 1)
+
+    def write_eof(self) -> None:
+        self._reader.feed_eof()
+
+    def can_write_eof(self) -> bool:
+        return True
+
+    def is_closing(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        self.write_eof()
+
+
+def mempipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """
+    - setup reader
+    - setup network reader/writer
+    - setup writer
+    """
     reader = asyncio.StreamReader()
 
     # TODO: Calls to `writer.drain` will block until the corresponding data has
@@ -74,7 +106,7 @@ def mempipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
 
     # Preliminary investigation suggests that this must be done in the
     # `Protocol` class
-    transport = MemoryTransport(address, reader)
+    transport = DirectLinkTransport(address, reader)
     protocol = asyncio.StreamReaderProtocol(reader)
 
     writer = asyncio.StreamWriter(
@@ -86,9 +118,15 @@ def mempipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     return reader, writer
 
 
+async def connect_network(reader, writer):
+
+
 def get_connected_readers(server_address, client_address):
-    server_reader, client_writer = mempipe(server_address)
-    client_reader, server_writer = mempipe(client_address)
+    server_reader, server_network_writer = mempipe(server_address)
+    server_network_reader, client_writer = mempipe(server_address)
+
+    client_reader, client_network_writer = mempipe(client_address)
+    client_network_reader, server_writer = mempipe(client_address)
 
     return (
         server_reader, server_writer,
