@@ -21,7 +21,7 @@ class Address(NamedTuple):
         return '%s:%s:%s' % (self.transport, self.host, self.port)
 
 
-class DirectLinkTransport(asyncio.Transport):
+class AddressedTransport(asyncio.Transport):
     """
     Direct connection between a StreamWriter and StreamReader.
     """
@@ -29,44 +29,18 @@ class DirectLinkTransport(asyncio.Transport):
     def __init__(self, address: Address, reader: asyncio.StreamReader) -> None:
         super().__init__()
         self._address = address
+        self._queue = asyncio.Queue()
         self._reader = reader
+
+    @property
+    def queue(self):
+        return self._queue
 
     def get_extra_info(self, name, default=None):
         if name == 'peername':
             return (self._address.host, self._address.port)
         else:
             return super().get_extra_info(name, default)
-
-    def write(self, data: bytes) -> None:
-        self._reader.feed_data(data)
-
-    def writelines(self, data: Iterable[bytes]) -> None:
-        for line in data:
-            self._reader.feed_data(line)
-            self._reader.feed_data(b'\n')
-
-    def write_eof(self) -> None:
-        self._reader.feed_eof()
-
-    def can_write_eof(self) -> bool:
-        return True
-
-    def is_closing(self) -> bool:
-        return False
-
-    def close(self) -> None:
-        self.write_eof()
-
-
-class NetworkSimulatorTransport(asyncio.Transport):
-    """
-    Direct connection between a StreamWriter and StreamReader.
-    """
-
-    def __init__(self, reader: asyncio.StreamReader) -> None:
-        super().__init__()
-        self._queue = asyncio.Queue
-        self._reader = reader
 
     def write(self, data: bytes) -> None:
         self._queue.put_nowait(len(data))
@@ -91,22 +65,40 @@ class NetworkSimulatorTransport(asyncio.Transport):
         self.write_eof()
 
 
-def mempipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+class MemoryTransport(asyncio.Transport):
     """
-    - setup reader
-    - setup network reader/writer
-    - setup writer
+    Direct connection between a StreamWriter and StreamReader.
     """
+
+    def __init__(self, reader: asyncio.StreamReader) -> None:
+        super().__init__()
+        self._reader = reader
+
+    def write(self, data: bytes) -> None:
+        self._reader.feed_data(data)
+
+    def writelines(self, data: Iterable[bytes]) -> None:
+        for line in data:
+            self._reader.feed_data(line)
+            self._reader.feed_data(b'\n')
+
+    def write_eof(self) -> None:
+        self._reader.feed_eof()
+
+    def can_write_eof(self) -> bool:
+        return True
+
+    def is_closing(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        self.write_eof()
+
+
+def addressed_pipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     reader = asyncio.StreamReader()
 
-    # TODO: Calls to `writer.drain` will block until the corresponding data has
-    # actually been read by the reader.  This is not how things actually behave
-    # in a real networked environment as the call to `writer.drain` will return
-    # once the data has been sent over the protocol, so...
-
-    # Preliminary investigation suggests that this must be done in the
-    # `Protocol` class
-    transport = DirectLinkTransport(address, reader)
+    transport = AddressedTransport(address, reader)
     protocol = asyncio.StreamReaderProtocol(reader)
 
     writer = asyncio.StreamWriter(
@@ -118,15 +110,47 @@ def mempipe(address) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     return reader, writer
 
 
-async def connect_network(reader, writer):
+def direct_pipe() -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    reader = asyncio.StreamReader()
+
+    transport = MemoryTransport(reader)
+    protocol = asyncio.StreamReaderProtocol(reader)
+
+    writer = asyncio.StreamWriter(
+        transport=transport,
+        protocol=protocol,
+        reader=reader,
+        loop=asyncio.get_event_loop(),
+    )
+    return reader, writer
+
+
+async def connect_network(reader, writer, queue):
+    while not reader.at_eof():
+        size = await queue.get()
+        data = reader.readexactly(size)
+        writer.write(data)
+        logger.info('CONNECTED NETWORK PIPE: size %s', size)
+        #await writer.drain()
 
 
 def get_connected_readers(server_address, client_address):
-    server_reader, server_network_writer = mempipe(server_address)
-    server_network_reader, client_writer = mempipe(server_address)
+    server_reader, server_network_writer = direct_pipe()
+    server_network_reader, client_writer = addressed_pipe(server_address)
 
-    client_reader, client_network_writer = mempipe(client_address)
-    client_network_reader, server_writer = mempipe(client_address)
+    client_reader, client_network_writer = direct_pipe()
+    client_network_reader, server_writer = addressed_pipe(client_address)
+
+    asyncio.ensure_future(connect_network(
+        server_network_reader,
+        server_network_writer,
+        client_writer.transport.queue,
+    ))
+    asyncio.ensure_future(connect_network(
+        client_network_reader,
+        client_network_writer,
+        server_writer.transport.queue,
+    ))
 
     return (
         server_reader, server_writer,
