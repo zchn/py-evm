@@ -128,10 +128,12 @@ def direct_pipe() -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
 async def connect_network(reader, writer, queue):
     while not reader.at_eof():
         size = await queue.get()
-        data = reader.readexactly(size)
+        data = await reader.readexactly(size)
         writer.write(data)
         logger.info('CONNECTED NETWORK PIPE: size %s', size)
-        #await writer.drain()
+        await writer.drain()
+    else:
+        writer.write_eof()
 
 
 def get_connected_readers(server_address, client_address):
