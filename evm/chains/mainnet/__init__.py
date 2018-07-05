@@ -7,6 +7,7 @@ from eth_utils import (
 
 from .constants import (
     BYZANTIUM_MAINNET_BLOCK,
+    ETH_ACL2_MAINNET_BLOCK,
     TANGERINE_WHISTLE_MAINNET_BLOCK,
     HOMESTEAD_MAINNET_BLOCK,
     SPURIOUS_DRAGON_MAINNET_BLOCK,
@@ -26,6 +27,7 @@ from evm.vm.forks import (
     HomesteadVM,
     SpuriousDragonVM,
     ByzantiumVM,
+    EthAcl2Vm,
 )
 
 
@@ -68,6 +70,7 @@ MAINNET_VM_CONFIGURATION = (
     (TANGERINE_WHISTLE_MAINNET_BLOCK, TangerineWhistleVM),
     (SPURIOUS_DRAGON_MAINNET_BLOCK, SpuriousDragonVM),
     (BYZANTIUM_MAINNET_BLOCK, ByzantiumVM),
+    (ETH_ACL2_MAINNET_BLOCK, EthAcl2VM),
 )
 
 
