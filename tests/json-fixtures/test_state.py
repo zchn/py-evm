@@ -25,6 +25,7 @@ from evm.vm.forks import (
     HomesteadVM,
     SpuriousDragonVM,
     ByzantiumVM,
+    EthAcl2VM,
 )
 from evm.vm.forks.tangerine_whistle.state import TangerineWhistleState
 from evm.vm.forks.frontier.state import FrontierState
