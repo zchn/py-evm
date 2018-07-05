@@ -27,7 +27,7 @@ from evm.vm.forks import (
     HomesteadVM,
     SpuriousDragonVM,
     ByzantiumVM,
-    EthAcl2Vm,
+    EthAcl2VM,
 )
 
 
