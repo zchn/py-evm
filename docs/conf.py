@@ -41,6 +41,7 @@ needs_sphinx = '1.5'
 extensions = [
     'sphinx.ext.todo',
     'sphinx.ext.autodoc',
+    'sphinx.ext.doctest',
     'sphinx.ext.intersphinx',
     'sphinxcontrib.asyncio',
 ]
@@ -113,7 +114,7 @@ html_theme = 'sphinx_rtd_theme'
 # html_static_path = ['_static']
 
 # Allows the mod index to function more helpfully (not everything under 'e')
-modindex_common_prefix = ['evm.']
+modindex_common_prefix = ['eth.']
 
 ##
 #  Below be monsters, for now.  You've been warned.
@@ -180,3 +181,14 @@ intersphinx_mapping = {
     'python': ('https://docs.python.org/3.5', None),
     'eth-typing': ('https://eth-typing.readthedocs.io/en/latest', None),
 }
+
+# -- Doctest configuration ----------------------------------------
+
+import doctest
+
+doctest_default_flags = (0
+    | doctest.DONT_ACCEPT_TRUE_FOR_1
+    | doctest.ELLIPSIS
+    | doctest.IGNORE_EXCEPTION_DETAIL
+    | doctest.NORMALIZE_WHITESPACE
+)

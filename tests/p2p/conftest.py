@@ -1,6 +1,4 @@
-def pytest_addoption(parser):
-    parser.addoption("--enode", type=str, required=False)
-    parser.addoption("--integration", action="store_true", default=False)
+import pytest
 
 
 """
@@ -30,3 +28,10 @@ def p2p_logger():
 
     return logger
 """
+
+
+@pytest.fixture(autouse=True)
+def _network_sim(router):
+    network = router.get_network(name='simulated')
+    with network.patch_asyncio():
+        yield network

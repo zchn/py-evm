@@ -3,7 +3,7 @@
 import logging
 import sys
 
-from evm.utils.version import (
+from eth.utils.version import (
     construct_evm_runtime_identifier
 )
 
@@ -13,8 +13,18 @@ from checks import (
     SimpleValueTransferBenchmark,
 )
 
-from checks.deploy_erc20 import (
-    DeployErc20
+from checks.erc20_interact import (
+    ERC20DeployBenchmark,
+    ERC20TransferBenchmark,
+    ERC20ApproveBenchmark,
+    ERC20TransferFromBenchmark,
+)
+from checks.deploy_dos import (
+    DOSContractDeployBenchmark,
+    DOSContractSstoreUint64Benchmark,
+    DOSContractCreateEmptyContractBenchmark,
+    DOSContractRevertSstoreUint64Benchmark,
+    DOSContractRevertCreateEmptyContractBenchmark,
 )
 
 from checks.simple_value_transfers import (
@@ -70,7 +80,15 @@ def run() -> None:
         ImportEmptyBlocksBenchmark(),
         SimpleValueTransferBenchmark(TO_EXISTING_ADDRESS_CONFIG),
         SimpleValueTransferBenchmark(TO_NON_EXISTING_ADDRESS_CONFIG),
-        DeployErc20(),
+        ERC20DeployBenchmark(),
+        ERC20TransferBenchmark(),
+        ERC20ApproveBenchmark(),
+        ERC20TransferFromBenchmark(),
+        DOSContractDeployBenchmark(),
+        DOSContractSstoreUint64Benchmark(),
+        DOSContractCreateEmptyContractBenchmark(),
+        DOSContractRevertSstoreUint64Benchmark(),
+        DOSContractRevertCreateEmptyContractBenchmark(),
     ]
 
     for benchmark in benchmarks:

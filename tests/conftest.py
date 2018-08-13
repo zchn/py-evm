@@ -1,7 +1,7 @@
 import logging
 import sys
 
-# from evm.utils.logging import TRACE_LEVEL_NUM
+# from eth.utils.logging import TRACE_LEVEL_NUM
 
 import pytest
 
@@ -12,45 +12,49 @@ from eth_utils import (
 )
 from eth_keys import keys
 
-from evm import constants
-from evm.chains.base import (
+from eth import constants
+from eth.chains.base import (
     Chain,
     MiningChain,
 )
-from evm.db.backends.memory import MemoryDB
+from eth.db.backends.memory import MemoryDB
 # TODO: tests should not be locked into one set of VM rules.  Look at expanding
 # to all mainnet vms.
-from evm.vm.forks.spurious_dragon import SpuriousDragonVM
+from eth.vm.forks.spurious_dragon import SpuriousDragonVM
+
+
+LOGGING_NAMESPACES = ('eth', 'p2p', 'trinity')
 
 
 @pytest.fixture(autouse=True, scope="session")
-def vm_logger():
-    logger = logging.getLogger('evm')
+def _stdout_logging(namespaces=LOGGING_NAMESPACES):
+    for namespace in namespaces:
+        logger = logging.getLogger(namespace)
 
-    handler = logging.StreamHandler(sys.stdout)
+        handler = logging.StreamHandler(sys.stdout)
 
-    # level = TRACE_LEVEL_NUM
-    # level = logging.DEBUG
-    # level = logging.INFO
-    level = logging.ERROR
+        # level = 5  # TRACE
+        # level = logging.DEBUG
+        # level = logging.INFO
+        level = logging.ERROR
 
-    logger.setLevel(level)
-    handler.setLevel(level)
+        logger.setLevel(level)
+        handler.setLevel(level)
 
-    logger.addHandler(handler)
+        logger.addHandler(handler)
 
-    return logger
+        logger.info('Set level for logger: %s', namespace)
 
 
 # Uncomment this to have logs from tests written to a file.  This is useful for
 # debugging when you need to dump the VM output from test runs.
 """
 @pytest.yield_fixture(autouse=True)
-def vm_file_logger(request):
+def _file_logging(request):
     import datetime
     import os
 
-    logger = logging.getLogger('evm')
+    logger = logging.getLogger('eth')
 
     level = TRACE_LEVEL_NUM
     #level = logging.DEBUG

@@ -35,14 +35,14 @@ CONN_IDLE_TIMEOUT = 30
 
 # Timeout used when waiting for a reply from a remote node.
 REPLY_TIMEOUT = 3
+MAX_REQUEST_ATTEMPTS = 3
 
 # Timeout used when performing the check to ensure peers are on the same side of chain splits as
 # us.
 CHAIN_SPLIT_CHECK_TIMEOUT = 5 * REPLY_TIMEOUT
 
-# Types of LES Announce messages
-LES_ANNOUNCE_SIMPLE = 1
-LES_ANNOUNCE_SIGNED = 2
+# Default timeout before giving up on a caller-initiated interaction
+COMPLETION_TIMEOUT = 5
 
 MAINNET_BOOTNODES = (
     'enode://a979fb575495b8d6db44f750317d0f4622bf4c2aa3365d6af7c284339968eef29b69ad0dce72a4d8db5ebb4968de0e3bec910127f134779fbcb0cb6d3331163c@52.16.188.185:30303',  # noqa: E501
@@ -53,11 +53,9 @@ MAINNET_BOOTNODES = (
 )
 ROPSTEN_BOOTNODES = (
     'enode://30b7ab30a01c124a6cceca36863ece12c4f5fa68e3ba9b0b51407ccc002eeed3b3102d20a88f1c1d3c3154e2449317b8ef95090e77b312d5cc39354f86d5d606@52.176.7.10:30303',     # noqa: E501
-    # FIXME: Re-enable those bootnodes once we've figured out why we can't "bond" with them:
-    # https://github.com/ethereum/py-evm/issues/438
-    # 'enode://865a63255b3bb68023b6bffd5095118fcc13e79dcf014fe4e47e065c350c7cc72af2e53eff895f11ba1bbb6a2b33271c1116ee870f266618eadfc2e78aa7349c@52.176.100.77:30303',   # noqa: E501
-    # 'enode://6332792c4a00e3e4ee0926ed89e0d27ef985424d97b6a45bf0f23e51f0dcb5e66b875777506458aea7af6f9e4ffb69f43f3778ee73c81ed9d34c51c4b16b0b0f@52.232.243.152:30303',  # noqa: E501
-    # 'enode://94c15d1b9e2fe7ce56e458b9a3b672ef11894ddedd0c6f247e0f1d3487f52b66208fb4aeb8179fce6e3a749ea93ed147c37976d67af557508d199d9594c35f09@192.81.208.223:30303',  # noqa: E501
+    'enode://865a63255b3bb68023b6bffd5095118fcc13e79dcf014fe4e47e065c350c7cc72af2e53eff895f11ba1bbb6a2b33271c1116ee870f266618eadfc2e78aa7349c@52.176.100.77:30303',   # noqa: E501
+    'enode://6332792c4a00e3e4ee0926ed89e0d27ef985424d97b6a45bf0f23e51f0dcb5e66b875777506458aea7af6f9e4ffb69f43f3778ee73c81ed9d34c51c4b16b0b0f@52.232.243.152:30303',  # noqa: E501
+    'enode://94c15d1b9e2fe7ce56e458b9a3b672ef11894ddedd0c6f247e0f1d3487f52b66208fb4aeb8179fce6e3a749ea93ed147c37976d67af557508d199d9594c35f09@192.81.208.223:30303',  # noqa: E501
 )
 
 # Maximum peers number, we'll try to keep open connections up to this number of peers
@@ -65,3 +63,9 @@ DEFAULT_MAX_PEERS = 25
 
 # Maximum allowed depth for chain reorgs.
 MAX_REORG_DEPTH = 24
+
+# Random sampling rate (i.e. every K-th) for header seal checks during light/fast sync. Apparently
+# 100 was the optimal value determined by geth devs
+# (https://github.com/ethereum/go-ethereum/pull/1889#issue-47241762), but in order to err on the
+# side of caution, we use a higher value.
+SEAL_CHECK_RANDOM_SAMPLE_RATE = 48

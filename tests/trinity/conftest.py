@@ -1,19 +1,20 @@
 import asyncio
 import os
+from pathlib import Path
 import pytest
 import tempfile
 import uuid
 
 from p2p.peer import PeerPool
-from p2p.server import (
-    Server
-)
 
 from trinity.rpc.main import (
     RPCServer,
 )
 from trinity.rpc.ipc import (
     IPCServer,
+)
+from trinity.server import (
+    Server
 )
 from trinity.utils.xdg import (
     get_xdg_trinity_root,
@@ -23,12 +24,17 @@ from trinity.utils.filesystem import (
 )
 
 
+def pytest_addoption(parser):
+    parser.addoption("--enode", type=str, required=False)
+    parser.addoption("--integration", action="store_true", default=False)
+
+
 @pytest.fixture(autouse=True)
 def xdg_trinity_root(monkeypatch, tmpdir):
     """
     Ensure proper test isolation as well as protecting the real directories.
     """
-    dir_path = tmpdir.mkdir('xdg_trinity_root')
+    dir_path = tmpdir.mkdir('trinity')
     monkeypatch.setenv('XDG_TRINITY_ROOT', str(dir_path))
 
     assert not is_under_path(os.path.expandvars('$HOME'), get_xdg_trinity_root())
@@ -48,12 +54,7 @@ def event_loop():
 @pytest.fixture(scope='session')
 def jsonrpc_ipc_pipe_path():
     with tempfile.TemporaryDirectory() as temp_dir:
-        ipc_path = os.path.join(temp_dir, '{0}.ipc'.format(uuid.uuid4()))
-        try:
-            yield ipc_path
-        finally:
-            if os.path.exists(ipc_path):
-                os.remove(ipc_path)
+        yield Path(temp_dir) / '{0}.ipc'.format(uuid.uuid4())
 
 
 @pytest.fixture
@@ -63,8 +64,9 @@ def p2p_server(monkeypatch, jsonrpc_ipc_pipe_path):
     return Server(None, None, None, None, None, None, None)
 
 
+@pytest.mark.asyncio
 @pytest.fixture
-def ipc_server(
+async def ipc_server(
         monkeypatch,
         p2p_server,
         jsonrpc_ipc_pipe_path,
@@ -72,16 +74,15 @@ def ipc_server(
         chain_with_block_validation):
     '''
     This fixture runs a single RPC server over IPC over
-    the course of all tests. It never needs to be actually
-    used as a fixture, so it doesn't return (yield) a value.
+    the course of all tests. It yields the IPC server only for monkeypatching purposes
     '''
 
     rpc = RPCServer(chain_with_block_validation, p2p_server.peer_pool)
-    ipc_server = IPCServer(rpc, jsonrpc_ipc_pipe_path)
+    ipc_server = IPCServer(rpc, jsonrpc_ipc_pipe_path, loop=event_loop)
 
-    asyncio.ensure_future(ipc_server.run(loop=event_loop), loop=event_loop)
+    asyncio.ensure_future(ipc_server.run(), loop=event_loop)
 
     try:
-        yield
+        yield ipc_server
     finally:
-        event_loop.run_until_complete(ipc_server.stop())
+        await ipc_server.cancel()

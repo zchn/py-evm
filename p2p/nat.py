@@ -9,12 +9,12 @@ from typing import (
 )
 from urllib.parse import urlparse
 
-from p2p.cancel_token import (
+from cancel_token import (
     CancelToken,
+    OperationCancelled,
 )
 from p2p.exceptions import (
     NoInternalAddressMatchesDevice,
-    OperationCancelled,
 )
 import netifaces
 from p2p.service import BaseService

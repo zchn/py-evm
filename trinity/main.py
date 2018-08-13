@@ -1,17 +1,23 @@
+from argparse import Namespace
 import asyncio
 import logging
 import signal
 import sys
-from typing import Type
+import time
+from typing import (
+    Any,
+    Dict,
+    Type,
+)
 
-from evm.chains.mainnet import (
+from eth.chains.mainnet import (
     MAINNET_NETWORK_ID,
 )
-from evm.chains.ropsten import (
+from eth.chains.ropsten import (
     ROPSTEN_NETWORK_ID,
 )
-from evm.db.backends.base import BaseDB
-from evm.db.backends.level import LevelDB
+from eth.db.backends.base import BaseDB
+from eth.db.backends.level import LevelDB
 
 from p2p.service import BaseService
 
@@ -24,21 +30,30 @@ from trinity.chains import (
     is_data_dir_initialized,
     serve_chaindb,
 )
-from trinity.console import (
-    console,
-)
 from trinity.cli_parser import (
     parser,
+    subparser,
 )
 from trinity.config import (
     ChainConfig,
 )
+from trinity.extensibility import (
+    PluginManager,
+)
+from trinity.extensibility.events import (
+    TrinityStartupEvent
+)
+from trinity.plugins.registry import (
+    ENABLED_PLUGINS
+)
 from trinity.utils.ipc import (
     wait_for_ipc,
     kill_process_gracefully,
+    kill_process_id_gracefully,
 )
 from trinity.utils.logging import (
-    setup_trinity_stdout_logging,
+    setup_log_levels,
+    setup_trinity_stderr_logging,
     setup_trinity_file_and_queue_logging,
     with_queued_logging,
 )
@@ -81,9 +96,9 @@ TRINITY_AMBIGIOUS_FILESYSTEM_INFO = (
 
 
 def main() -> None:
+    plugin_manager = setup_plugins()
+    plugin_manager.amend_argparser_config(parser, subparser)
     args = parser.parse_args()
-
-    log_level = getattr(logging, args.log_level.upper())
 
     if args.network_id not in PRECONFIGURED_NETWORKS:
         raise NotImplementedError(
@@ -91,7 +106,11 @@ def main() -> None:
             "networks are supported.".format(args.network_id)
         )
 
-    logger, formatter, handler_stream = setup_trinity_stdout_logging(log_level)
+    logger, formatter, handler_stream = setup_trinity_stderr_logging(
+        args.stderr_log_level
+    )
+    if args.log_levels:
+        setup_log_levels(args.log_levels)
 
     try:
         chain_config = ChainConfig.from_parser_args(args)
@@ -122,25 +141,45 @@ def main() -> None:
         formatter,
         handler_stream,
         chain_config,
-        log_level
+        args.file_log_level,
     )
+
+    # if cleanup command, try to shutdown dangling processes and exit
+    if args.subcommand == 'fix-unclean-shutdown':
+        fix_unclean_shutdown(chain_config, logger)
+        sys.exit(0)
 
     display_launch_logs(chain_config)
 
-    # if console command, run the trinity CLI
-    if args.subcommand == 'attach':
-        run_console(chain_config, not args.vanilla_shell)
-        sys.exit(0)
-
-    # start the listener thread to handle logs produced by other processes in
-    # the local logger.
-    listener.start()
+    # compute the minimum configured log level across all configured loggers.
+    min_configured_log_level = min(
+        args.stderr_log_level,
+        args.file_log_level,
+        *(args.log_levels or {}).values()
+    )
 
     extra_kwargs = {
         'log_queue': log_queue,
-        'log_level': log_level,
+        'log_level': min_configured_log_level,
         'profile': args.profile,
     }
+
+    # Plugins can provide a subcommand with a `func` which does then control
+    # the entire process from here.
+    if hasattr(args, 'func'):
+        args.func(args, chain_config)
+    else:
+        trinity_boot(args, chain_config, extra_kwargs, listener, logger)
+
+
+def trinity_boot(args: Namespace,
+                 chain_config: ChainConfig,
+                 extra_kwargs: Dict[str, Any],
+                 listener: logging.handlers.QueueListener,
+                 logger: logging.Logger) -> None:
+    # start the listener thread to handle logs produced by other processes in
+    # the local logger.
+    listener.start()
 
     # First initialize the database process.
     database_server_process = ctx.Process(
@@ -154,7 +193,7 @@ def main() -> None:
 
     networking_process = ctx.Process(
         target=launch_node,
-        args=(chain_config, ),
+        args=(args, chain_config, ),
         kwargs=extra_kwargs,
     )
 
@@ -167,10 +206,7 @@ def main() -> None:
     logger.info("Started networking process (pid=%d)", networking_process.pid)
 
     try:
-        if args.subcommand == 'console':
-            run_console(chain_config, not args.vanilla_shell)
-        else:
-            networking_process.join()
+        networking_process.join()
     except KeyboardInterrupt:
         # When a user hits Ctrl+C in the terminal, the SIGINT is sent to all processes in the
         # foreground *process group*, so both our networking and database processes will terminate
@@ -187,26 +223,60 @@ def main() -> None:
         logger.info('DB server process (pid=%d) terminated', database_server_process.pid)
         # XXX: This short sleep here seems to avoid us hitting a deadlock when attempting to
         # join() the networking subprocess: https://github.com/ethereum/py-evm/issues/940
-        import time; time.sleep(0.2)  # noqa: E702
+        time.sleep(0.2)
         kill_process_gracefully(networking_process, logger)
         logger.info('Networking process (pid=%d) terminated', networking_process.pid)
 
 
-def run_console(chain_config: ChainConfig, vanilla_shell_args: bool) -> None:
-    logger = logging.getLogger("trinity")
+def fix_unclean_shutdown(chain_config: ChainConfig, logger: logging.Logger) -> None:
+    logger.info("Cleaning up unclean shutdown...")
+
+    logger.info("Searching for process id files in %s..." % chain_config.data_dir)
+    pidfiles = tuple(chain_config.data_dir.glob('*.pid'))
+    if len(pidfiles) > 1:
+        logger.info('Found %d processes from a previous run. Closing...' % len(pidfiles))
+    elif len(pidfiles) == 1:
+        logger.info('Found 1 process from a previous run. Closing...')
+    else:
+        logger.info('Found 0 processes from a previous run. No processes to kill.')
+
+    for pidfile in pidfiles:
+        process_id = int(pidfile.read_text())
+        kill_process_id_gracefully(process_id, time.sleep, logger)
+        try:
+            pidfile.unlink()
+            logger.info('Manually removed %s after killing process id %d' % (pidfile, process_id))
+        except FileNotFoundError:
+            logger.debug('pidfile %s was gone after killing process id %d' % (pidfile, process_id))
+
+    db_ipc = chain_config.database_ipc_path
     try:
-        console(chain_config.jsonrpc_ipc_path, use_ipython=vanilla_shell_args)
-    except FileNotFoundError as err:
-        logger.error(str(err))
-        sys.exit(1)
+        db_ipc.unlink()
+        logger.info('Removed a dangling IPC socket file for database connections at %s', db_ipc)
+    except FileNotFoundError:
+        logger.debug('The IPC socket file for database connections at %s was already gone', db_ipc)
+
+    jsonrpc_ipc = chain_config.jsonrpc_ipc_path
+    try:
+        jsonrpc_ipc.unlink()
+        logger.info(
+            'Removed a dangling IPC socket file for JSON-RPC connections at %s',
+            jsonrpc_ipc,
+        )
+    except FileNotFoundError:
+        logger.debug(
+            'The IPC socket file for JSON-RPC connections at %s was already gone',
+            jsonrpc_ipc,
+        )
 
 
 @setup_cprofiler('run_database_process')
 @with_queued_logging
 def run_database_process(chain_config: ChainConfig, db_class: Type[BaseDB]) -> None:
-    base_db = db_class(db_path=chain_config.database_dir)
+    with chain_config.process_id_file('database'):
+        base_db = db_class(db_path=chain_config.database_dir)
 
-    serve_chaindb(chain_config, base_db)
+        serve_chaindb(chain_config, base_db)
 
 
 def exit_because_ambigious_filesystem(logger: logging.Logger) -> None:
@@ -215,7 +285,7 @@ def exit_because_ambigious_filesystem(logger: logging.Logger) -> None:
 
 
 async def exit_on_signal(service_to_exit: BaseService) -> None:
-    loop = asyncio.get_event_loop()
+    loop = service_to_exit.get_event_loop()
     sigint_received = asyncio.Event()
     for sig in [signal.SIGINT, signal.SIGTERM]:
         # TODO also support Windows
@@ -230,11 +300,24 @@ async def exit_on_signal(service_to_exit: BaseService) -> None:
 
 @setup_cprofiler('launch_node')
 @with_queued_logging
-def launch_node(chain_config: ChainConfig) -> None:
-    NodeClass = chain_config.node_class
-    node = NodeClass(chain_config)
+def launch_node(args: Namespace, chain_config: ChainConfig) -> None:
+    with chain_config.process_id_file('networking'):
+        NodeClass = chain_config.node_class
+        # Temporary hack: We setup a second instance of the PluginManager.
+        # The first instance was only to configure the ArgumentParser whereas
+        # for now, the second instance that lives inside the networking process
+        # performs the bulk of the work. In the future, the PluginManager
+        # should probably live in its own process and manage whether plugins
+        # run in the shared plugin process or spawn their own.
+        plugin_manager = setup_plugins()
+        plugin_manager.broadcast(TrinityStartupEvent(
+            args,
+            chain_config
+        ))
 
-    run_service_until_quit(node)
+        node = NodeClass(plugin_manager, chain_config)
+
+        run_service_until_quit(node)
 
 
 def display_launch_logs(chain_config: ChainConfig) -> None:
@@ -245,8 +328,16 @@ def display_launch_logs(chain_config: ChainConfig) -> None:
 
 
 def run_service_until_quit(service: BaseService) -> None:
-    loop = asyncio.get_event_loop()
-    asyncio.ensure_future(exit_on_signal(service))
-    asyncio.ensure_future(service.run())
+    loop = service.get_event_loop()
+    asyncio.ensure_future(exit_on_signal(service), loop=loop)
+    asyncio.ensure_future(service.run(), loop=loop)
     loop.run_forever()
     loop.close()
+
+
+def setup_plugins() -> PluginManager:
+    plugin_manager = PluginManager()
+    # TODO: Implement auto-discovery of plugins based on some convention/configuration scheme
+    plugin_manager.register(ENABLED_PLUGINS)
+
+    return plugin_manager

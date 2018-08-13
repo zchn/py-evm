@@ -6,13 +6,13 @@ from eth_utils import (
 
 from cytoolz import sliding_window
 
-from evm.chains.mainnet import (
+from eth.chains.mainnet import (
     MainnetHomesteadVM,
 )
-from evm.exceptions import (
+from eth.exceptions import (
     ValidationError,
 )
-from evm.rlp.headers import BlockHeader
+from eth.rlp.headers import BlockHeader
 
 
 class ETC_VM(MainnetHomesteadVM):
@@ -283,10 +283,10 @@ def header_pairs(VM, headers, valid):
 )
 def test_mainnet_dao_fork_header_validation(VM, header, previous_header, valid):
     if valid:
-        VM.validate_header(header, previous_header)
+        VM.validate_header(header, previous_header, check_seal=True)
     else:
         try:
-            VM.validate_header(header, previous_header)
+            VM.validate_header(header, previous_header, check_seal=True)
         except ValidationError:
             pass
         else:

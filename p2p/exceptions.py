@@ -31,10 +31,18 @@ class HandshakeFailure(BaseP2PError):
     pass
 
 
+class DAOForkCheckFailure(BaseP2PError):
+    """
+    Raised when the DAO fork check with a certain peer is unsuccessful.
+    """
+    pass
+
+
 class MalformedMessage(BaseP2PError):
     """
     Raised when a p2p command is received with a malformed message
     """
+    pass
 
 
 class UnknownProtocolCommand(BaseP2PError):
@@ -79,13 +87,6 @@ class TooManyTimeouts(BaseP2PError):
     pass
 
 
-class OperationCancelled(BaseP2PError):
-    """
-    Raised when an operation was cancelled.
-    """
-    pass
-
-
 class NoMatchingPeerCapabilities(BaseP2PError):
     """
     Raised when no matching protocol between peers was found.
@@ -109,7 +110,14 @@ class NoConnectedPeers(BaseP2PError):
 
 class NoEligiblePeers(BaseP2PError):
     """
-    Raised when none of our peers have the blocks we want.
+    Raised when none of our peers have the data we want.
+    """
+    pass
+
+
+class NoIdlePeers(BaseP2PError):
+    """
+    Raised when none of our peers is idle and can be used for data requests.
     """
     pass
 
@@ -138,6 +146,9 @@ class BadAckMessage(BaseP2PError):
 class BadLESResponse(BaseP2PError):
     """
     Raised when the response to a LES request doesn't contain the data we asked for.
+
+    The peer can be treated as violating protocol. Often, the repurcussion should be
+    disconnection and blacklisting.
     """
     pass
 
@@ -147,5 +158,12 @@ class NoInternalAddressMatchesDevice(BaseP2PError):
     Raised when no internal IP address matches the UPnP device that is being configured.
     """
     def __init__(self, *args: Any, device_hostname: str=None, **kwargs: Any) -> None:
-        super.__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.device_hostname = device_hostname
+
+
+class ValidationError(BaseP2PError):
+    """
+    Raised when something does not pass a validation check.
+    """
+    pass

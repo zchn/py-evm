@@ -1,4 +1,5 @@
 import argparse
+from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -9,10 +10,10 @@ from typing import (
 
 from eth_keys import keys
 from eth_keys.datatypes import PrivateKey
-from evm.chains.mainnet import (
+from eth.chains.mainnet import (
     MAINNET_NETWORK_ID,
 )
-from evm.chains.ropsten import (
+from eth.chains.ropsten import (
     ROPSTEN_NETWORK_ID,
 )
 from p2p.kademlia import Node as KademliaNode
@@ -35,6 +36,9 @@ from trinity.utils.chains import (
     get_logfile_path,
     get_nodekey_path,
     load_nodekey,
+)
+from trinity.utils.filesystem import (
+    PidFile,
 )
 
 if TYPE_CHECKING:
@@ -147,7 +151,7 @@ class ChainConfig:
         elif self.sync_mode == SYNC_LIGHT:
             return self.data_dir / DATABASE_DIR_NAME / "light"
         else:
-            raise ValueError("Unknown sync mode: {}}".format(self.sync_mode))
+            raise ValueError("Unknown sync mode: {}".format(self.sync_mode))
 
     @property
     def database_ipc_path(self) -> Path:
@@ -235,3 +239,8 @@ class ChainConfig:
             raise NotImplementedError(
                 "Only full and light sync modes are supported"
             )
+
+    @contextmanager
+    def process_id_file(self, process_name: str):  # type: ignore
+        with PidFile(process_name, self.data_dir):
+            yield

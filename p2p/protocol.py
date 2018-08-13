@@ -13,8 +13,11 @@ from typing import (
 import rlp
 from rlp import sedes
 
-from evm.constants import NULL_BYTE
+from eth.constants import NULL_BYTE
 
+from p2p.exceptions import (
+    MalformedMessage,
+)
 from p2p.utils import get_devp2p_cmd_id
 
 
@@ -27,7 +30,7 @@ if TYPE_CHECKING:
 _DecodedMsgType = Union[
     Dict[str, Any],
     List[rlp.Serializable],
-    Tuple[rlp.Serializable],
+    Tuple[rlp.Serializable, ...],
 ]
 
 
@@ -79,7 +82,13 @@ class Command:
         else:
             decoder = sedes.List(
                 [type_ for _, type_ in self.structure], strict=self.decode_strict)
-        data = rlp.decode(rlp_data, sedes=decoder)
+        try:
+            data = rlp.decode(rlp_data, sedes=decoder)
+        except rlp.DecodingError as err:
+            raise MalformedMessage(
+                "Malformed %s message: %r".format(type(self).__name__, err)
+            ) from err
+
         if isinstance(self.structure, sedes.CountableList):
             return data
         return {
@@ -91,7 +100,7 @@ class Command:
     def decode(self, data: bytes) -> _DecodedMsgType:
         packet_type = get_devp2p_cmd_id(data)
         if packet_type != self.cmd_id:
-            raise ValueError("Wrong packet type: {}".format(packet_type))
+            raise MalformedMessage("Wrong packet type: {}".format(packet_type))
         return self.decode_payload(data[1:])
 
     def encode(self, data: _DecodedMsgType) -> Tuple[bytes, bytes]:

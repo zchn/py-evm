@@ -1,68 +1,77 @@
 from abc import ABC, abstractmethod
 import asyncio
+import functools
 import logging
 from typing import (
-    Awaitable,
+    Any,
     Callable,
-    cast,
+    List,
     Optional,
-    TypeVar
+    cast,
 )
 
-from evm.utils.logging import TraceLogger
+from eth.tools.logging import TraceLogger
 
-from p2p.cancel_token import CancelToken, wait_with_token
-from p2p.exceptions import OperationCancelled
+from cancel_token import CancelToken, OperationCancelled
+
+from p2p.cancellable import CancellableMixin
+from p2p.utils import get_asyncio_executor
 
 
-class BaseService(ABC):
+class ServiceEvents:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.stopped = asyncio.Event()
+        self.cleaned_up = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.finished = asyncio.Event()
+
+
+class BaseService(ABC, CancellableMixin):
     logger: TraceLogger = None
+    _child_services: List['BaseService']
+    _finished_callbacks: List[Callable[['BaseService'], None]]
     # Number of seconds cancel() will wait for run() to finish.
     _wait_until_finished_timeout = 5
 
-    def __init__(self, token: CancelToken=None) -> None:
-        if self.logger is None:
-            self.logger = cast(
-                TraceLogger, logging.getLogger(self.__module__ + '.' + self.__class__.__name__))
+    # the custom event loop to run in, or None if the default loop should be used
+    _loop: asyncio.AbstractEventLoop = None
 
+    _logger: TraceLogger = None
+
+    def __init__(self,
+                 token: CancelToken=None,
+                 loop: asyncio.AbstractEventLoop = None) -> None:
+        self.events = ServiceEvents()
         self._run_lock = asyncio.Lock()
-        self.cleaned_up = asyncio.Event()
+        self._child_services = []
+        self._finished_callbacks = []
 
-        base_token = CancelToken(type(self).__name__)
+        self._loop = loop
+
+        base_token = CancelToken(type(self).__name__, loop=loop)
+
         if token is None:
             self.cancel_token = base_token
         else:
             self.cancel_token = base_token.chain(token)
 
-    _TReturn = TypeVar('_TReturn')
+        self._executor = get_asyncio_executor()
 
-    async def wait(self,
-                   awaitable: Awaitable[_TReturn],
-                   token: CancelToken = None,
-                   timeout: float = None) -> _TReturn:
-        """See wait_first()"""
-        return await self.wait_first(awaitable, token=token, timeout=timeout)
+    @property
+    def logger(self) -> TraceLogger:
+        if self._logger is None:
+            self._logger = cast(
+                TraceLogger,
+                logging.getLogger(self.__module__ + '.' + self.__class__.__name__)
+            )
+        return self._logger
 
-    async def wait_first(self,
-                         *awaitables: Awaitable[_TReturn],
-                         token: CancelToken = None,
-                         timeout: float = None) -> _TReturn:
-        """Wait for the first awaitable to complete, unless we timeout or the token chain is triggered.
-
-        The given token is chained with this service's token, so triggering either will cancel
-        this.
-
-        Returns the result of the first one to complete.
-
-        Raises TimeoutError if we timeout or OperationCancelled if the token chain is triggered.
-
-        All pending futures are cancelled before returning.
-        """
-        if token is None:
-            token_chain = self.cancel_token
+    def get_event_loop(self) -> asyncio.AbstractEventLoop:
+        if self._loop is None:
+            return asyncio.get_event_loop()
         else:
-            token_chain = token.chain(self.cancel_token)
-        return await wait_with_token(*awaitables, token=token_chain, timeout=timeout)
+            return self._loop
 
     async def run(
             self,
@@ -77,8 +86,12 @@ class BaseService(ABC):
         elif self.cancel_token.triggered:
             raise RuntimeError("Cannot restart a service that has already been cancelled")
 
+        if finished_callback:
+            self._finished_callbacks.append(finished_callback)
+
         try:
             async with self._run_lock:
+                self.events.started.set()
                 await self._run()
         except OperationCancelled as e:
             self.logger.info("%s finished: %s", self, e)
@@ -87,17 +100,45 @@ class BaseService(ABC):
         finally:
             # Trigger our cancel token to ensure all pending asyncio tasks and background
             # coroutines started by this service exit cleanly.
+            self.events.cancelled.set()
             self.cancel_token.trigger()
 
             await self.cleanup()
 
-            if finished_callback is not None:
-                finished_callback(self)
+            for callback in self._finished_callbacks:
+                callback(self)
+
+            self.events.finished.set()
+            self.logger.debug("%s halted cleanly", self)
+
+    def add_finished_callback(self, finished_callback: Callable[['BaseService'], None]) -> None:
+        self._finished_callbacks.append(finished_callback)
+
+    def run_child_service(self, child_service: 'BaseService') -> 'asyncio.Future[Any]':
+        """
+        Run a child service and keep a reference to it to be considered during the cleanup.
+        """
+        self._child_services.append(child_service)
+        return asyncio.ensure_future(child_service.run())
+
+    async def _run_in_executor(self, callback: Callable[..., Any], *args: Any) -> Any:
+        loop = self.get_event_loop()
+        return await self.wait(loop.run_in_executor(self._executor, callback, *args))
 
     async def cleanup(self) -> None:
-        """Run the service's _cleanup() coroutine and sets the cleaned_up event."""
-        await self._cleanup()
-        self.cleaned_up.set()
+        """
+        Run the ``_cleanup()`` coroutine and set the ``cleaned_up`` event after the service as
+        well as all child services finished their cleanup.
+
+        The ``_cleanup()`` coroutine is invoked before the child services may have finished
+        their cleanup.
+        """
+        await asyncio.gather(*[
+            child_service.events.cleaned_up.wait()
+            for child_service in self._child_services],
+            self._cleanup()
+        )
+        self.events.cleaned_up.set()
 
     async def cancel(self) -> None:
         """Trigger the CancelToken and wait for the cleaned_up event to be set."""
@@ -108,10 +149,11 @@ class BaseService(ABC):
             raise RuntimeError("Cannot cancel a service that has not been started")
 
         self.logger.debug("Cancelling %s", self)
+        self.events.cancelled.set()
         self.cancel_token.trigger()
         try:
             await asyncio.wait_for(
-                self.cleaned_up.wait(), timeout=self._wait_until_finished_timeout)
+                self.events.cleaned_up.wait(), timeout=self._wait_until_finished_timeout)
         except asyncio.futures.TimeoutError:
             self.logger.info("Timed out waiting for %s to finish its cleanup, exiting anyway", self)
         else:
@@ -120,6 +162,22 @@ class BaseService(ABC):
     @property
     def is_running(self) -> bool:
         return self._run_lock.locked()
+
+    async def threadsafe_cancel(self) -> None:
+        """
+        Cancel service in another thread. Block until service is cleaned up.
+
+        :param poll_period: how many seconds to wait in between each check for service cleanup
+        """
+        asyncio.run_coroutine_threadsafe(self.cancel(), loop=self.get_event_loop())
+        await asyncio.wait_for(
+            self.events.cleaned_up.wait(),
+            timeout=self._wait_until_finished_timeout,
+        )
+
+    async def sleep(self, delay: float) -> None:
+        """Coroutine that completes after a given time (in seconds)."""
+        await self.wait(asyncio.sleep(delay))
 
     @abstractmethod
     async def _run(self) -> None:
@@ -136,6 +194,25 @@ class BaseService(ABC):
         Called after the service's _run() method returns.
         """
         raise NotImplementedError()
+
+
+def service_timeout(timeout: int) -> Callable[..., Any]:
+    """
+    Decorator to time out a method call.
+
+    :param timeout: seconds to wait before raising a timeout exception
+
+    :raise asyncio.futures.TimeoutError: if the call is not complete before timeout seconds
+    """
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        async def wrapped(service: BaseService, *args: Any, **kwargs: Any) -> Any:
+            return await service.wait(
+                func(service, *args, **kwargs),
+                timeout=timeout,
+            )
+        return wrapped
+    return decorator
 
 
 class EmptyService(BaseService):

@@ -1,9 +1,11 @@
+from logging import Logger
+from multiprocessing import Process
 import os
 import pathlib
 import signal
+import subprocess
 import time
-from multiprocessing import Process
-from logging import Logger
+from typing import Callable
 
 
 def wait_for_ipc(ipc_path: pathlib.Path, timeout: int=1) -> None:
@@ -14,19 +16,45 @@ def wait_for_ipc(ipc_path: pathlib.Path, timeout: int=1) -> None:
         time.sleep(0.05)
 
 
-def kill_process_gracefully(process: Process,
-                            logger: Logger,
-                            SIGINT_timeout: int=5,
-                            SIGTERM_timeout: int=3) -> None:
+def kill_process_gracefully(
+        process: Process,
+        logger: Logger,
+        SIGINT_timeout: int=5,
+        SIGTERM_timeout: int=3) -> None:
+    kill_process_id_gracefully(process.pid, process.join, logger, SIGINT_timeout, SIGTERM_timeout)
+
+
+def kill_popen_gracefully(
+        popen: subprocess.Popen,
+        logger: Logger,
+        SIGINT_timeout: int=5,
+        SIGTERM_timeout: int=3) -> None:
+
+    def silent_timeout(timeout_len: int) -> None:
+        try:
+            popen.wait(timeout_len)
+        except subprocess.TimeoutExpired:
+            pass
+
+    kill_process_id_gracefully(popen.pid, silent_timeout, logger, SIGINT_timeout, SIGTERM_timeout)
+
+
+def kill_process_id_gracefully(
+        process_id: int,
+        wait_for_completion: Callable[[int], None],
+        logger: Logger,
+        SIGINT_timeout: int=5,
+        SIGTERM_timeout: int=3) -> None:
     try:
-        if not process.is_alive():
-            logger.info("Process %d has already terminated", process.pid)
+        try:
+            os.kill(process_id, signal.SIGINT)
+        except ProcessLookupError:
+            logger.info("Process %d has already terminated", process_id)
             return
-        os.kill(process.pid, signal.SIGINT)
         logger.info(
             "Sent SIGINT to process %d, waiting %d seconds for it to terminate",
-            process.pid, SIGINT_timeout)
-        process.join(SIGINT_timeout)
+            process_id, SIGINT_timeout)
+        wait_for_completion(SIGINT_timeout)
     except KeyboardInterrupt:
         logger.info(
             "Waiting for process to terminate.  You may force termination "
@@ -34,20 +62,24 @@ def kill_process_gracefully(process: Process,
         )
 
     try:
-        if not process.is_alive():
+        try:
+            os.kill(process_id, signal.SIGTERM)
+        except ProcessLookupError:
+            logger.info("Process %d has already terminated", process_id)
             return
-        os.kill(process.pid, signal.SIGTERM)
         logger.info(
             "Sent SIGTERM to process %d, waiting %d seconds for it to terminate",
-            process.pid, SIGTERM_timeout)
-        process.join(SIGTERM_timeout)
+            process_id, SIGTERM_timeout)
+        wait_for_completion(SIGTERM_timeout)
     except KeyboardInterrupt:
         logger.info(
             "Waiting for process to terminate.  You may force termination "
             "with CTRL+C one more time."
         )
 
-    if not process.is_alive():
+    try:
+        os.kill(process_id, signal.SIGKILL)
+    except ProcessLookupError:
+        logger.info("Process %d has already terminated", process_id)
         return
-    os.kill(process.pid, signal.SIGKILL)
-    logger.info("Sent SIGKILL to process %d", process.pid)
+    logger.info("Sent SIGKILL to process %d", process_id)

@@ -21,41 +21,44 @@ from eth_typing import (
     Hash32,
 )
 
-from evm.chains.base import (
+from eth.chains.base import (
     AccountState,
     BaseChain,
 )
-from evm.db.backends.base import BaseDB
-from evm.db.chain import (
+from eth.db.backends.base import BaseDB
+from eth.db.chain import (
     BaseChainDB,
 )
-from evm.db.header import (
+from eth.db.header import (
     BaseHeaderDB,
 )
-from evm.rlp.blocks import (
+from eth.rlp.blocks import (
     BaseBlock,
 )
-from evm.rlp.headers import (
+from eth.rlp.headers import (
     BlockHeader,
     HeaderParams,
 )
-from evm.rlp.receipts import (
+from eth.rlp.receipts import (
     Receipt
 )
-from evm.rlp.transactions import (
+from eth.rlp.transactions import (
     BaseTransaction,
     BaseUnsignedTransaction,
 )
-from evm.vm.computation import (
+from eth.utils.spoof import (
+    SpoofTransaction,
+)
+from eth.vm.computation import (
     BaseComputation
 )
 
-from p2p.lightchain import (
+from trinity.sync.light.service import (
     LightPeerChain,
 )
 
 if TYPE_CHECKING:
-    from evm.vm.base import BaseVM  # noqa: F401
+    from eth.vm.base import BaseVM  # noqa: F401
 
 
 class LightDispatchChain(BaseChain):
@@ -189,7 +192,10 @@ class LightDispatchChain(BaseChain):
             transaction: BaseTransaction) -> Tuple[BaseBlock, Receipt, BaseComputation]:
         raise NotImplementedError("Chain classes must implement " + inspect.stack()[0][3])
 
-    def estimate_gas(self, transaction: BaseTransaction, at_header: BlockHeader=None) -> int:
+    def estimate_gas(
+            self,
+            transaction: Union[BaseTransaction, SpoofTransaction],
+            at_header: BlockHeader=None) -> int:
         raise NotImplementedError("Chain classes must implement " + inspect.stack()[0][3])
 
     def import_block(self, block: BaseBlock, perform_validation: bool=True) -> BaseBlock:
@@ -213,7 +219,7 @@ class LightDispatchChain(BaseChain):
     def validate_uncles(self, block: BaseBlock) -> None:
         raise NotImplementedError("Chain classes must implement " + inspect.stack()[0][3])
 
-    def validate_chain(self, chain: Tuple[BlockHeader, ...]) -> None:
+    def validate_chain(self, chain: Tuple[BlockHeader, ...], seal_check_frequency: int = 1) -> None:
         raise NotImplementedError("Chain classes must implement " + inspect.stack()[0][3])
 
     #

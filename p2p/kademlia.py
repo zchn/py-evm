@@ -13,6 +13,7 @@ from typing import (
     Any,
     Callable,
     cast,
+    Dict,
     Hashable,
     Iterable,
     Iterator,
@@ -23,6 +24,8 @@ from typing import (
     TYPE_CHECKING,
 )
 from urllib import parse as urlparse
+
+import cytoolz
 
 from eth_utils import (
     big_endian_to_int,
@@ -37,7 +40,7 @@ from eth_keys import (
 
 from eth_hash.auto import keccak
 
-from p2p.cancel_token import CancelToken, wait_with_token
+from cancel_token import CancelToken
 
 # Workaround for import cycles caused by type annotations:
 # http://mypy.readthedocs.io/en/latest/common_issues.html#import-cycles
@@ -396,6 +399,7 @@ class KademliaProtocol:
         self.pong_callbacks = CallbackManager()
         self.ping_callbacks = CallbackManager()
         self.neighbours_callbacks = CallbackManager()
+        self.parity_pong_tokens: Dict[bytes, bytes] = {}
 
     def recv_neighbours(self, remote: Node, neighbours: List[Node]) -> None:
         """Process a neighbours response.
@@ -421,6 +425,18 @@ class KademliaProtocol:
         left to the callback from pong_callbacks, which is added (and removed after it's done
         or timed out) in wait_pong().
         """
+        # XXX: This hack is needed because there are lots of parity 1.10 nodes out there that send
+        # the wrong token on pong msgs (https://github.com/paritytech/parity/issues/8038). We
+        # should get rid of this once there are no longer too many parity 1.10 nodes out there.
+        if token in self.parity_pong_tokens:
+            # This is a pong from a buggy parity node, so need to lookup the actual token we're
+            # expecting.
+            token = self.parity_pong_tokens.pop(token)
+        else:
+            # This is a pong from a non-buggy node, so just cleanup self.parity_pong_tokens.
+            self.parity_pong_tokens = cytoolz.valfilter(
+                lambda val: val != token, self.parity_pong_tokens)
+
         self.logger.debug('<<< pong from %s (token == %s)', remote, encode_hex(token))
         pingid = self._mkpingid(token, remote)
 
@@ -488,8 +504,8 @@ class KademliaProtocol:
         with self.ping_callbacks.acquire(remote, event.set):
             got_ping = False
             try:
-                got_ping = await wait_with_token(
-                    event.wait(), token=cancel_token, timeout=k_request_timeout)
+                got_ping = await cancel_token.cancellable_wait(
+                    event.wait(), timeout=k_request_timeout)
                 self.logger.debug('got expected ping from %s', remote)
             except TimeoutError:
                 self.logger.debug('timed out waiting for ping from %s', remote)
@@ -509,8 +525,8 @@ class KademliaProtocol:
         with self.pong_callbacks.acquire(pingid, event.set):
             got_pong = False
             try:
-                got_pong = await wait_with_token(
-                    event.wait(), token=cancel_token, timeout=k_request_timeout)
+                got_pong = await cancel_token.cancellable_wait(
+                    event.wait(), timeout=k_request_timeout)
                 self.logger.debug('got expected pong with token %s', encode_hex(token))
             except TimeoutError:
                 self.logger.debug(
@@ -539,8 +555,8 @@ class KademliaProtocol:
 
         with self.neighbours_callbacks.acquire(remote, process):
             try:
-                await wait_with_token(
-                    event.wait(), token=cancel_token, timeout=k_request_timeout)
+                await cancel_token.cancellable_wait(
+                    event.wait(), timeout=k_request_timeout)
                 self.logger.debug('got expected neighbours response from %s', remote)
             except TimeoutError:
                 self.logger.debug('timed out waiting for neighbours response from %s', remote)

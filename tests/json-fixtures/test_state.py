@@ -1,10 +1,11 @@
+import logging
 import os
 
 import pytest
 
 from eth_keys import keys
 
-from evm.db import (
+from eth.db import (
     get_db_backend,
 )
 
@@ -15,11 +16,11 @@ from eth_utils import (
 
 from eth_hash.auto import keccak
 
-from evm.db.chain import ChainDB
-from evm.exceptions import (
+from eth.db.chain import ChainDB
+from eth.exceptions import (
     ValidationError,
 )
-from evm.vm.forks import (
+from eth.vm.forks import (
     TangerineWhistleVM,
     FrontierVM,
     HomesteadVM,
@@ -27,16 +28,16 @@ from evm.vm.forks import (
     ByzantiumVM,
     EthAcl2VM,
 )
-from evm.vm.forks.tangerine_whistle.state import TangerineWhistleState
-from evm.vm.forks.frontier.state import FrontierState
-from evm.vm.forks.homestead.state import HomesteadState
-from evm.vm.forks.spurious_dragon.state import SpuriousDragonState
-from evm.vm.forks.byzantium.state import ByzantiumState
+from eth.vm.forks.tangerine_whistle.state import TangerineWhistleState
+from eth.vm.forks.frontier.state import FrontierState
+from eth.vm.forks.homestead.state import HomesteadState
+from eth.vm.forks.spurious_dragon.state import SpuriousDragonState
+from eth.vm.forks.byzantium.state import ByzantiumState
 
-from evm.rlp.headers import (
+from eth.rlp.headers import (
     BlockHeader,
 )
-from evm.tools.fixture_tests import (
+from eth.tools.fixture_tests import (
     filter_fixtures,
     generate_fixture_tests,
     hash_log_entries,
@@ -44,15 +45,13 @@ from evm.tools.fixture_tests import (
     normalize_statetest_fixture,
     should_run_slow_tests,
 )
-from evm.utils.db import (
+from eth.utils.db import (
     apply_state_dict,
 )
 
 from eth_typing.enums import (
     ForkName
 )
-
-from tests.conftest import vm_logger
 
 
 ROOT_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -61,7 +60,7 @@ ROOT_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 BASE_FIXTURE_PATH = os.path.join(ROOT_PROJECT_DIR, 'fixtures', 'GeneralStateTests')
 
 
-LOGGER = vm_logger()
+logger = logging.getLogger('eth.tests.fixtures.GeneralStateTests')
 
 
 @to_tuple
@@ -315,7 +314,7 @@ def test_state_fixtures(fixture, fixture_vm_class):
     except ValidationError as err:
         block = vm.block
         transaction_error = err
-        LOGGER.warn("Got transaction error", exc_info=True)
+        logger.warn("Got transaction error", exc_info=True)
     else:
         transaction_error = False
 

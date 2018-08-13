@@ -32,13 +32,18 @@ test-all:
 	tox
 
 coverage:
-	coverage run --source evm
+	coverage run --source eth
 	coverage report -m
 	coverage html
 	open htmlcov/index.html
 
 build-docs:
-	cd docs/; sphinx-build -T -E . _build/html
+	cd docs/; sphinx-build -W -T -E . _build/html
+
+doctest:
+	cd docs/; sphinx-build -T -b doctest . _build/doctest
+
+validate-docs: build-docs doctest
 
 docs: build-docs
 	open docs/_build/html/index.html
@@ -51,7 +56,16 @@ release: clean
 	git config commit.gpgSign true
 	bumpversion $(bump)
 	git push upstream && git push upstream --tags
-	python setup.py sdist bdist_wheel upload
+	python setup.py sdist bdist_wheel
+	twine upload dist/*
+	git config commit.gpgSign "$(CURRENT_SIGN_SETTING)"
+
+release-trinity: clean
+	CURRENT_SIGN_SETTING=$(git config commit.gpgSign)
+	git config commit.gpgSign true
+	git push upstream && git push upstream --tags
+	python setup_trinity.py sdist bdist_wheel
+	twine upload dist/*
 	git config commit.gpgSign "$(CURRENT_SIGN_SETTING)"
 
 sdist: clean

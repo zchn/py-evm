@@ -1,14 +1,16 @@
 import argparse
+import logging
 from typing import (
     Any,
 )
 
-from evm.chains.mainnet import (
+from eth.chains.mainnet import (
     MAINNET_NETWORK_ID,
 )
-from evm.chains.ropsten import (
+from eth.chains.ropsten import (
     ROPSTEN_NETWORK_ID,
 )
+from eth.tools.logging import TRACE_LEVEL_NUM
 
 from p2p.kademlia import Node
 
@@ -23,12 +25,12 @@ class ValidateAndStoreEnodes(argparse.Action):
     def __call__(self,
                  parser: argparse.ArgumentParser,
                  namespace: argparse.Namespace,
-                 values: Any,
+                 value: Any,
                  option_string: str=None) -> None:
-        if values is None:
+        if value is None:
             return
 
-        enode = Node.from_uri(values)
+        enode = Node.from_uri(value)
 
         if getattr(namespace, self.dest) is None:
             setattr(namespace, self.dest, [])
@@ -36,11 +38,89 @@ class ValidateAndStoreEnodes(argparse.Action):
         enode_list.append(enode)
 
 
-DEFAULT_LOG_LEVEL = 'info'
-LOG_LEVEL_CHOICES = (
-    'debug',
-    'info',
-)
+LOG_LEVEL_CHOICES = {
+    # numeric versions
+    '5': TRACE_LEVEL_NUM,
+    '10': logging.DEBUG,
+    '20': logging.INFO,
+    '30': logging.WARNING,
+    '40': logging.ERROR,
+    '50': logging.CRITICAL,
+    # string versions
+    'TRACE': TRACE_LEVEL_NUM,
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARN': logging.WARNING,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL,
+}
+
+
+class ValidateAndStoreLogLevel(argparse.Action):
+    def __call__(self,
+                 parser: argparse.ArgumentParser,
+                 namespace: argparse.Namespace,
+                 value: Any,
+                 option_string: str=None) -> None:
+        if value is None:
+            return
+
+        raw_value = value.upper()
+
+        # this is a global log level.
+        if raw_value in LOG_LEVEL_CHOICES:
+            path = None
+            log_level = LOG_LEVEL_CHOICES[raw_value]
+        else:
+            path, _, raw_log_level = value.partition('=')
+
+            if not path or not raw_log_level:
+                raise argparse.ArgumentError(
+                    self,
+                    "Invalid logging config: '{0}'.  Log level may be specified "
+                    "as a global logging level using the syntax `--log-level "
+                    "<LEVEL-NAME>` or for to specify the logging level for an "
+                    "individual logger, '--log-level "
+                    "<LOGGER-NAME>:<LEVEL-NAME>'".format(value)
+                )
+
+            try:
+                log_level = LOG_LEVEL_CHOICES[raw_log_level.upper()]
+            except KeyError:
+                raise argparse.ArgumentError(
+                    self,
+                    (
+                        "Invalid logging level.  Got '{0}'.  Must be one of\n"
+                        " - 5/10/20/30/40 (numeric logging levels)\n"
+                        " - trace/debug/info/warn/warning/error/critical (lowercase)\n"
+                        " - TRACE/DEBUG/INFO/WARN/WARNING/ERROR/CRITICAL (uppercase)\n"
+                    ).format(raw_log_level),
+                )
+
+        if getattr(namespace, self.dest) is None:
+            setattr(namespace, self.dest, {})
+        log_levels = getattr(namespace, self.dest)
+        if path in log_levels:
+            if path is None:
+                raise argparse.ArgumentError(
+                    self,
+                    "Global logging has already been configured to '{0}'.  The "
+                    "global logging level may only be specified once.".format(
+                        log_level,
+                    )
+                )
+            else:
+                raise argparse.ArgumentError(
+                    self,
+                    "The logging level for '{0}' was provided more than once. "
+                    "Please ensure the each name is provided only once"
+                )
+        log_levels[path] = log_level
+
+
+DEFAULT_STDERR_LOG_LEVEL = logging.INFO
+DEFAULT_DEBUG_LOG_LEVEL = logging.DEBUG
 
 
 parser = argparse.ArgumentParser(description='Trinity')
@@ -48,6 +128,8 @@ parser = argparse.ArgumentParser(description='Trinity')
 #
 # subparser for sub commands
 #
+# Plugins may add subcommands with a `func` attribute
+# to gain control over the main Trinity process
 subparser = parser.add_subparsers(dest='subcommand')
 
 #
@@ -89,9 +171,32 @@ trinity_parser.add_argument(
 logging_parser.add_argument(
     '-l',
     '--log-level',
-    choices=LOG_LEVEL_CHOICES,
-    default=DEFAULT_LOG_LEVEL,
-    help="Sets the logging level",
+    action=ValidateAndStoreLogLevel,
+    dest="log_levels",
+    metavar="LEVEL",
+    help=(
+        "Configure the logging level. The `LEVEL` may be provide as any of: "
+        "TRACE/DEBUG/INFO/WARN/WARNING/ERROR/CRITICAL, "
+        "5/10/20/30/40/50, or to specify "
+        "the logging level for a specific logger, `--log-level "
+        "LOGGER_NAME=LEVEL`.  Default: INFO"
+    ),
+)
+logging_parser.add_argument(
+    '--stderr-log-level',
+    dest="stderr_log_level",
+    default=DEFAULT_STDERR_LOG_LEVEL,
+    help=(
+        "Configure the logging level for the stderr logging."
+    ),
+)
+logging_parser.add_argument(
+    '--file-log-level',
+    dest="file_log_level",
+    default=DEFAULT_DEBUG_LOG_LEVEL,
+    help=(
+        "Configure the logging level for file-based logging."
+    ),
 )
 
 #
@@ -186,30 +291,10 @@ debug_parser.add_argument(
     ),
 )
 
-
 #
-# Add `console` sub-command to trinity CLI.
+# Add `fix-unclean-shutdown` sub-command to trinity CLI
 #
-console_parser = subparser.add_parser(
-    'console', help='run the chain and start the trinity REPL')
-console_parser.add_argument(
-    '--vanilla-shell',
-    action='store_true',
-    default=False,
-    help='start a native Python shell'
-)
-
-
-#
-# Add `attach` sub-command to trinity CLI.
-#
-attach_parser = subparser.add_parser(
-    'attach',
-    help='open an REPL attached to a currently running chain',
-)
-attach_parser.add_argument(
-    '--vanilla-shell',
-    action='store_true',
-    default=False,
-    help='start a native Python shell'
+fix_unclean_shutdown_parser = subparser.add_parser(
+    'fix-unclean-shutdown',
+    help='close any dangling processes from a previous unclean shutdown',
 )
